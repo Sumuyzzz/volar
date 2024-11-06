@@ -1,6 +1,7 @@
 import * as CompilerDOM from '@vue/compiler-dom';
 import type { Code } from '../../types';
-import { endOfLine, newLine, wrapWith } from '../common';
+import { createVBindShorthandInlayHintInfo } from '../inlayHints';
+import { endOfLine, newLine, wrapWith } from '../utils';
 import type { TemplateCodegenContext } from './context';
 import { generateElementChildren } from './elementChildren';
 import { generateElementProps } from './elementProps';
@@ -14,7 +15,7 @@ export function* generateSlotOutlet(
 	currentComponent: CompilerDOM.ElementNode | undefined,
 	componentCtxVar: string | undefined
 ): Generator<Code> {
-	const startTagOffset = node.loc.start.offset + options.template.content.substring(node.loc.start.offset).indexOf(node.tag);
+	const startTagOffset = node.loc.start.offset + options.template.content.slice(node.loc.start.offset).indexOf(node.tag);
 	const varSlot = ctx.getInternalVariable();
 	const nameProp = node.props.find(prop => {
 		if (prop.type === CompilerDOM.NodeTypes.ATTRIBUTE) {
@@ -54,14 +55,14 @@ export function* generateSlotOutlet(
 			startTagOffset + node.tag.length,
 			ctx.codeFeatures.verification,
 			`{${newLine}`,
-			...generateElementProps(options, ctx, node, node.props.filter(prop => prop !== nameProp), true),
+			...generateElementProps(options, ctx, node, node.props.filter(prop => prop !== nameProp), true, true),
 			`}`
 		);
 		yield `)${endOfLine}`;
 	}
 	else {
 		yield `var ${varSlot} = {${newLine}`;
-		yield* generateElementProps(options, ctx, node, node.props.filter(prop => prop !== nameProp), true);
+		yield* generateElementProps(options, ctx, node, node.props.filter(prop => prop !== nameProp), options.vueCompilerOptions.strictTemplates, true);
 		yield `}${endOfLine}`;
 
 		if (
@@ -80,15 +81,20 @@ export function* generateSlotOutlet(
 			nameProp?.type === CompilerDOM.NodeTypes.DIRECTIVE
 			&& nameProp.exp?.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION
 		) {
+			const isShortHand = nameProp.arg?.loc.start.offset === nameProp.exp.loc.start.offset;
+			if (isShortHand) {
+				ctx.inlayHints.push(createVBindShorthandInlayHintInfo(nameProp.exp.loc, 'name'));
+			}
 			const slotExpVar = ctx.getInternalVariable();
 			yield `var ${slotExpVar} = `;
 			yield* generateInterpolation(
 				options,
 				ctx,
-				nameProp.exp.content,
-				nameProp.exp,
-				nameProp.exp.loc.start.offset,
+				'template',
 				ctx.codeFeatures.all,
+				nameProp.exp.content,
+				nameProp.exp.loc.start.offset,
+				nameProp.exp,
 				'(',
 				')'
 			);

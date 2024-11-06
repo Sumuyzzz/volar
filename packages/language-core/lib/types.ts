@@ -55,7 +55,9 @@ export interface VueCompilerOptions {
 	experimentalModelPropName: Record<string, Record<string, boolean | Record<string, string> | Record<string, string>[]>>;
 
 	// internal
-	__setupedGlobalTypes?: boolean;
+	__setupedGlobalTypes?: true | {
+		absolutePath: string;
+	};
 	__test?: boolean;
 }
 
@@ -81,8 +83,8 @@ export type VueLanguagePluginReturn = {
 
 export type VueLanguagePlugin = (ctx: {
 	modules: {
-		typescript: typeof import('typescript');
-		'@vue/compiler-dom': typeof import('@vue/compiler-dom');
+		typescript: typeof ts;
+		'@vue/compiler-dom': typeof CompilerDOM;
 	};
 	compilerOptions: ts.CompilerOptions;
 	vueCompilerOptions: VueCompilerOptions;

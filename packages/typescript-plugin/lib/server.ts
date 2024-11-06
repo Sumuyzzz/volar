@@ -1,6 +1,6 @@
 import type { Language } from '@vue/language-core';
-import * as fs from 'fs';
-import * as net from 'net';
+import * as fs from 'node:fs';
+import * as net from 'node:net';
 import type * as ts from 'typescript';
 import { collectExtractProps } from './requests/collectExtractProps';
 import { getComponentEvents, getComponentNames, getComponentProps, getElementAttrs, getTemplateContextProps } from './requests/componentInfos';
@@ -139,7 +139,7 @@ function tryListen(server: net.Server, namedPipePath: string) {
 			resolve(true);
 		};
 		const onError = (err: any) => {
-			if ((err as any).code === 'ECONNREFUSED') {
+			if (err.code === 'ECONNREFUSED') {
 				try {
 					console.log('[Vue Named Pipe Client] Deleting:', namedPipePath);
 					fs.promises.unlink(namedPipePath);

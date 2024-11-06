@@ -1,7 +1,7 @@
-import * as fs from 'fs';
-import * as net from 'net';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as net from 'node:net';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type * as ts from 'typescript';
 import type { ProjectInfo, Request } from './server';
 
@@ -99,7 +99,7 @@ export function connect(namedPipePath: string, timeout?: number) {
 			resolve(socket);
 		};
 		const onError = (err: any) => {
-			if ((err as any).code === 'ECONNREFUSED') {
+			if (err.code === 'ECONNREFUSED') {
 				try {
 					console.log('[Vue Named Pipe Client] Deleting:', namedPipePath);
 					fs.promises.unlink(namedPipePath);
@@ -138,14 +138,14 @@ export async function searchNamedPipeServerForFile(fileName: string) {
 			}
 
 			// Find servers containing the current file
-			const containsFile = await sendRequestWorker<boolean>({ type: 'containsFile' satisfies Request['type'], args: [fileName] }, socket);
+			const containsFile = await sendRequestWorker<boolean>({ type: 'containsFile', args: [fileName] }, socket);
 			if (!containsFile) {
 				socket.end();
 				return;
 			}
 
 			// Get project info for each server
-			const projectInfo = await sendRequestWorker<ProjectInfo>({ type: 'projectInfo' satisfies Request['type'], args: [fileName] }, socket);
+			const projectInfo = await sendRequestWorker<ProjectInfo>({ type: 'projectInfo', args: [fileName] }, socket);
 			if (!projectInfo) {
 				socket.end();
 				return;
@@ -179,7 +179,7 @@ export async function searchNamedPipeServerForFile(fileName: string) {
 			}
 
 			// Get project info for each server
-			const projectInfo = await sendRequestWorker<ProjectInfo>({ type: 'projectInfo' satisfies Request['type'], args: [fileName] }, socket);
+			const projectInfo = await sendRequestWorker<ProjectInfo>({ type: 'projectInfo', args: [fileName] }, socket);
 			if (!projectInfo) {
 				socket.end();
 				return;

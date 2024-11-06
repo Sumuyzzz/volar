@@ -1,8 +1,8 @@
 import type * as ts from 'typescript';
-import { getNodeText } from '../parsers/scriptSetupRanges';
-import type { Code, SfcBlock, VueCodeInformation } from '../types';
+import { getNodeText } from '../../parsers/scriptSetupRanges';
+import type { Code, SfcBlock, VueCodeInformation } from '../../types';
 
-export const newLine = '\n';
+export const newLine = `\n`;
 export const endOfLine = `;${newLine}`;
 export const combineLastMapping: VueCodeInformation = { __combineLastMapping: true };
 export const variableNameRegex = /^[a-zA-Z_$][0-9a-zA-Z_$]*$/;
@@ -91,7 +91,7 @@ export function createTsAst(ts: typeof import('typescript'), astHolder: any, tex
 
 export function generateSfcBlockSection(block: SfcBlock, start: number, end: number, features: VueCodeInformation): Code {
 	return [
-		block.content.substring(start, end),
+		block.content.slice(start, end),
 		block.name,
 		start,
 		features,

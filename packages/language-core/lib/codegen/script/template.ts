@@ -1,26 +1,19 @@
-import type * as ts from 'typescript';
+import * as path from 'path-browserify';
 import type { Code } from '../../types';
 import { getSlotsPropertyName, hyphenateTag } from '../../utils/shared';
-import { endOfLine, newLine } from '../common';
 import { TemplateCodegenContext, createTemplateCodegenContext } from '../template/context';
-import { forEachInterpolationSegment } from '../template/interpolation';
+import { generateInterpolation } from '../template/interpolation';
 import { generateStyleScopedClasses } from '../template/styleScopedClasses';
+import { endOfLine, newLine } from '../utils';
 import type { ScriptCodegenContext } from './context';
 import { codeFeatures, type ScriptCodegenOptions } from './index';
 
-function* generateTemplateCtx(
-	options: ScriptCodegenOptions,
-	isClassComponent: boolean
-): Generator<Code> {
+function* generateTemplateCtx(options: ScriptCodegenOptions): Generator<Code> {
 	const exps = [];
 
-	if (isClassComponent) {
-		exps.push(`this`);
-	}
-	else {
-		exps.push(`{} as InstanceType<__VLS_PickNotAny<typeof __VLS_self, new () => {}>>`);
-	}
-	if (options.vueCompilerOptions.petiteVueExtensions.some(ext => options.fileBaseName.endsWith(ext))) {
+	exps.push(`{} as InstanceType<__VLS_PickNotAny<typeof __VLS_self, new () => {}>>`);
+
+	if (options.vueCompilerOptions.petiteVueExtensions.some(ext => options.fileName.endsWith(ext))) {
 		exps.push(`globalThis`);
 	}
 	if (options.sfc.styles.some(style => style.module)) {
@@ -49,7 +42,7 @@ function* generateTemplateComponents(options: ScriptCodegenOptions): Generator<C
 	if (options.sfc.script && options.scriptRanges?.exportDefault?.componentsOption) {
 		const { componentsOption } = options.scriptRanges.exportDefault;
 		exps.push([
-			options.sfc.script.content.substring(componentsOption.start, componentsOption.end),
+			options.sfc.script.content.slice(componentsOption.start, componentsOption.end),
 			'script',
 			componentsOption.start,
 			codeFeatures.navigation,
@@ -59,18 +52,18 @@ function* generateTemplateComponents(options: ScriptCodegenOptions): Generator<C
 	let nameType: Code | undefined;
 	if (options.sfc.script && options.scriptRanges?.exportDefault?.nameOption) {
 		const { nameOption } = options.scriptRanges.exportDefault;
-		nameType = options.sfc.script.content.substring(nameOption.start, nameOption.end);
+		nameType = options.sfc.script.content.slice(nameOption.start, nameOption.end);
 	}
 	else if (options.sfc.scriptSetup) {
-		nameType = `'${options.scriptSetupRanges?.options.name ?? options.fileBaseName.substring(0, options.fileBaseName.lastIndexOf('.'))}'`;
+		const baseName = path.basename(options.fileName);
+		nameType = `'${options.scriptSetupRanges?.options.name ?? baseName.slice(0, baseName.lastIndexOf('.'))}'`;
 	}
 	if (nameType) {
-		exps.push(`{} as {
-			[K in ${nameType}]: typeof __VLS_self
-				& (new () => {
-					${getSlotsPropertyName(options.vueCompilerOptions.target)}: typeof ${options.scriptSetupRanges?.slots?.name ?? '__VLS_slots'}
-				})
-		}`);
+		exps.push(
+			`{} as { [K in ${nameType}]: typeof __VLS_self & (new () => { `
+			+ getSlotsPropertyName(options.vueCompilerOptions.target)
+			+ ` : typeof ${options.scriptSetupRanges?.slots.name ?? `__VLS_slots`} }) }`
+		);
 	}
 
 	exps.push(`{} as NonNullable<typeof __VLS_self extends { components: infer C } ? C : {}>`);
@@ -93,7 +86,7 @@ export function* generateTemplateDirectives(options: ScriptCodegenOptions): Gene
 	if (options.sfc.script && options.scriptRanges?.exportDefault?.directivesOption) {
 		const { directivesOption } = options.scriptRanges.exportDefault;
 		exps.push([
-			options.sfc.script.content.substring(directivesOption.start, directivesOption.end),
+			options.sfc.script.content.slice(directivesOption.start, directivesOption.end),
 			'script',
 			directivesOption.start,
 			codeFeatures.navigation,
@@ -116,8 +109,7 @@ export function* generateTemplateDirectives(options: ScriptCodegenOptions): Gene
 
 export function* generateTemplate(
 	options: ScriptCodegenOptions,
-	ctx: ScriptCodegenContext,
-	isClassComponent: boolean
+	ctx: ScriptCodegenContext
 ): Generator<Code, TemplateCodegenContext> {
 	ctx.generatedTemplate = true;
 
@@ -125,7 +117,7 @@ export function* generateTemplate(
 		scriptSetupBindingNames: new Set(),
 		edited: options.edited,
 	});
-	yield* generateTemplateCtx(options, isClassComponent);
+	yield* generateTemplateCtx(options);
 	yield* generateTemplateComponents(options);
 	yield* generateTemplateDirectives(options);
 	yield* generateTemplateBody(options, templateCodegenCtx);
@@ -205,7 +197,7 @@ export function* generateCssClassProperty(
 	];
 	yield `'`;
 	yield [
-		classNameWithDot.substring(1),
+		classNameWithDot.slice(1),
 		'style_' + styleIndex,
 		offset + 1,
 		codeFeatures.navigation,
@@ -228,29 +220,14 @@ function* generateCssVars(options: ScriptCodegenOptions, ctx: TemplateCodegenCon
 	yield `// CSS variable injection ${newLine}`;
 	for (const style of options.sfc.styles) {
 		for (const cssBind of style.cssVars) {
-			for (const [segment, offset, onlyError] of forEachInterpolationSegment(
-				options.ts,
-				undefined,
-				undefined,
+			yield* generateInterpolation(
+				options,
 				ctx,
+				style.name,
+				codeFeatures.all,
 				cssBind.text,
-				cssBind.offset,
-				options.ts.createSourceFile('/a.txt', cssBind.text, 99 satisfies ts.ScriptTarget.ESNext)
-			)) {
-				if (offset === undefined) {
-					yield segment;
-				}
-				else {
-					yield [
-						segment,
-						style.name,
-						cssBind.offset + offset,
-						onlyError
-							? codeFeatures.navigation
-							: codeFeatures.all,
-					];
-				}
-			}
+				cssBind.offset
+			);
 			yield endOfLine;
 		}
 	}

@@ -1,6 +1,6 @@
 import * as CompilerDOM from '@vue/compiler-dom';
 import type { Code } from '../../types';
-import { endOfLine, newLine } from '../common';
+import { endOfLine, newLine } from '../utils';
 import type { TemplateCodegenContext } from './context';
 import { generateComponent, generateElement } from './element';
 import type { TemplateCodegenOptions } from './index';
@@ -31,23 +31,39 @@ export function* generateTemplateChild(
 	node: CompilerDOM.RootNode | CompilerDOM.TemplateChildNode | CompilerDOM.SimpleExpressionNode,
 	currentComponent: CompilerDOM.ElementNode | undefined,
 	prevNode: CompilerDOM.TemplateChildNode | undefined,
-	componentCtxVar: string | undefined
+	componentCtxVar: string | undefined,
+	isVForChild: boolean = false
 ): Generator<Code> {
 	if (prevNode?.type === CompilerDOM.NodeTypes.COMMENT) {
 		const commentText = prevNode.content.trim().split(' ')[0];
-		if (commentText.match(/^@vue-skip\b[\s\S]*/)) {
+		if (/^@vue-skip\b[\s\S]*/.test(commentText)) {
 			yield `// @vue-skip${newLine}`;
 			return;
 		}
-		else if (commentText.match(/^@vue-ignore\b[\s\S]*/)) {
+		else if (/^@vue-ignore\b[\s\S]*/.test(commentText)) {
 			yield* ctx.ignoreError();
 		}
-		else if (commentText.match(/^@vue-expect-error\b[\s\S]*/)) {
+		else if (/^@vue-expect-error\b[\s\S]*/.test(commentText)) {
 			yield* ctx.expectError(prevNode);
+		}
+		else {
+			const match = prevNode.loc.source.match(/^<!--\s*@vue-generic\b\s*\{(?<content>[^}]*)\}/);
+			if (match) {
+				const { content } = match.groups ?? {};
+				ctx.lastGenericComment = {
+					content,
+					offset: prevNode.loc.start.offset + match[0].indexOf(content)
+				};
+			}
 		}
 	}
 
 	const shouldInheritRootNodeAttrs = options.inheritAttrs;
+
+	const cur = node as CompilerDOM.ElementNode | CompilerDOM.IfNode | CompilerDOM.ForNode;
+	if (cur.codegenNode?.type === CompilerDOM.NodeTypes.JS_CACHE_EXPRESSION) {
+		cur.codegenNode = cur.codegenNode.value as any;
+	}
 
 	if (node.type === CompilerDOM.NodeTypes.ROOT) {
 		let prev: CompilerDOM.TemplateChildNode | undefined;
@@ -77,7 +93,7 @@ export function* generateTemplateChild(
 				node.tagType === CompilerDOM.ElementTypes.ELEMENT
 				|| node.tagType === CompilerDOM.ElementTypes.TEMPLATE
 			) {
-				yield* generateElement(options, ctx, node, currentComponent, componentCtxVar);
+				yield* generateElement(options, ctx, node, currentComponent, componentCtxVar, isVForChild);
 			}
 			else {
 				yield* generateComponent(options, ctx, node, currentComponent);
@@ -102,10 +118,11 @@ export function* generateTemplateChild(
 		yield* generateInterpolation(
 			options,
 			ctx,
-			content,
-			node.content.loc,
-			start,
+			'template',
 			ctx.codeFeatures.all,
+			content,
+			start,
+			node.content.loc,
 			`(`,
 			`)${endOfLine}`
 		);
@@ -178,11 +195,11 @@ export function parseInterpolationNode(node: CompilerDOM.InterpolationNode, temp
 	let rightCharacter: string;
 
 	// fix https://github.com/vuejs/language-tools/issues/1787
-	while ((leftCharacter = template.substring(start - 1, start)).trim() === '' && leftCharacter.length) {
+	while ((leftCharacter = template.slice(start - 1, start)).trim() === '' && leftCharacter.length) {
 		start--;
 		content = leftCharacter + content;
 	}
-	while ((rightCharacter = template.substring(start + content.length, start + content.length + 1)).trim() === '' && rightCharacter.length) {
+	while ((rightCharacter = template.slice(start + content.length, start + content.length + 1)).trim() === '' && rightCharacter.length) {
 		content = content + rightCharacter;
 	}
 

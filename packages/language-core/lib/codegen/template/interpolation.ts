@@ -1,29 +1,28 @@
-import { isGloballyWhitelisted } from '@vue/shared';
+import { isGloballyAllowed } from '@vue/shared';
 import type * as ts from 'typescript';
 import { getNodeText, getStartEnd } from '../../parsers/scriptSetupRanges';
 import type { Code, VueCodeInformation } from '../../types';
-import { collectVars, createTsAst } from '../common';
+import { collectVars, createTsAst } from '../utils';
 import type { TemplateCodegenContext } from './context';
-import type { TemplateCodegenOptions } from './index';
 
 export function* generateInterpolation(
-	options: TemplateCodegenOptions,
+	options: {
+		ts: typeof ts,
+		destructuredPropNames: Set<string> | undefined,
+		templateRefNames: Set<string> | undefined
+	},
 	ctx: TemplateCodegenContext,
-	_code: string,
-	astHolder: any,
-	start: number | undefined,
+	source: string,
 	data: VueCodeInformation | ((offset: number) => VueCodeInformation) | undefined,
-	prefix: string,
-	suffix: string
+	_code: string,
+	start: number | undefined,
+	astHolder: any = {},
+	prefix: string = '',
+	suffix: string = ''
 ): Generator<Code> {
 	const code = prefix + _code + suffix;
 	const ast = createTsAst(options.ts, astHolder, code);
-	const vars: {
-		text: string,
-		isShorthand: boolean,
-		offset: number,
-	}[] = [];
-	for (let [section, offset, onlyError] of forEachInterpolationSegment(
+	for (let [section, offset, type] of forEachInterpolationSegment(
 		options.ts,
 		options.destructuredPropNames,
 		options.templateRefNames,
@@ -40,38 +39,39 @@ export function* generateInterpolation(
 			let addSuffix = '';
 			const overLength = offset + section.length - _code.length;
 			if (overLength > 0) {
-				addSuffix = section.substring(section.length - overLength);
-				section = section.substring(0, section.length - overLength);
+				addSuffix = section.slice(section.length - overLength);
+				section = section.slice(0, -overLength);
 			}
 			if (offset < 0) {
-				yield section.substring(0, -offset);
-				section = section.substring(-offset);
+				yield section.slice(0, -offset);
+				section = section.slice(-offset);
 				offset = 0;
 			}
-			if (start !== undefined && data !== undefined) {
-				yield [
-					section,
-					'template',
-					start + offset,
-					onlyError
-						? ctx.codeFeatures.verification
-						: typeof data === 'function' ? data(start + offset) : data,
-				];
-			}
-			else {
-				yield section;
+			const shouldSkip = section.length === 0 && (type === 'startText' || type === 'endText');
+			if (!shouldSkip) {
+				if (
+					start !== undefined
+					&& data
+				) {
+					yield [
+						section,
+						source,
+						start + offset,
+						type === 'errorMappingOnly'
+							? ctx.codeFeatures.verification
+							: typeof data === 'function' ? data(start + offset) : data,
+					];
+				}
+				else {
+					yield section;
+				}
 			}
 			yield addSuffix;
 		}
 	}
-	if (start !== undefined) {
-		for (const v of vars) {
-			v.offset = start + v.offset - prefix.length;
-		}
-	}
 }
 
-export function* forEachInterpolationSegment(
+function* forEachInterpolationSegment(
 	ts: typeof import('typescript'),
 	destructuredPropNames: Set<string> | undefined,
 	templateRefNames: Set<string> | undefined,
@@ -79,7 +79,7 @@ export function* forEachInterpolationSegment(
 	code: string,
 	offset: number | undefined,
 	ast: ts.SourceFile
-): Generator<[fragment: string, offset: number | undefined, errorMappingOnly?: boolean]> {
+): Generator<[fragment: string, offset: number | undefined, type?: 'errorMappingOnly' | 'startText' | 'endText']> {
 	let ctxVars: {
 		text: string,
 		isShorthand: boolean,
@@ -91,7 +91,7 @@ export function* forEachInterpolationSegment(
 		if (
 			ctx.hasLocalVariable(text) ||
 			// https://github.com/vuejs/core/blob/245230e135152900189f13a4281302de45fdcfaa/packages/compiler-core/src/transforms/transformExpression.ts#L342-L352
-			isGloballyWhitelisted(text) ||
+			isGloballyAllowed(text) ||
 			text === 'require' ||
 			text.startsWith('__VLS_')
 		) {
@@ -121,11 +121,11 @@ export function* forEachInterpolationSegment(
 	if (ctxVars.length) {
 
 		if (ctxVars[0].isShorthand) {
-			yield [code.substring(0, ctxVars[0].offset + ctxVars[0].text.length), 0];
+			yield [code.slice(0, ctxVars[0].offset + ctxVars[0].text.length), 0];
 			yield [': ', undefined];
 		}
-		else {
-			yield [code.substring(0, ctxVars[0].offset), 0];
+		else if (ctxVars[0].offset > 0) {
+			yield [code.slice(0, ctxVars[0].offset), 0, 'startText'];
 		}
 
 		for (let i = 0; i < ctxVars.length - 1; i++) {
@@ -135,17 +135,19 @@ export function* forEachInterpolationSegment(
 			yield* generateVar(code, destructuredPropNames, templateRefNames, curVar, nextVar);
 
 			if (nextVar.isShorthand) {
-				yield [code.substring(curVar.offset + curVar.text.length, nextVar.offset + nextVar.text.length), curVar.offset + curVar.text.length];
+				yield [code.slice(curVar.offset + curVar.text.length, nextVar.offset + nextVar.text.length), curVar.offset + curVar.text.length];
 				yield [': ', undefined];
 			}
 			else {
-				yield [code.substring(curVar.offset + curVar.text.length, nextVar.offset), curVar.offset + curVar.text.length];
+				yield [code.slice(curVar.offset + curVar.text.length, nextVar.offset), curVar.offset + curVar.text.length];
 			}
 		}
 
 		const lastVar = ctxVars.at(-1)!;
 		yield* generateVar(code, destructuredPropNames, templateRefNames, lastVar);
-		yield [code.substring(lastVar.offset + lastVar.text.length), lastVar.offset + lastVar.text.length];
+		if (lastVar.offset + lastVar.text.length < code.length) {
+			yield [code.slice(lastVar.offset + lastVar.text.length), lastVar.offset + lastVar.text.length, 'endText'];
+		}
 	}
 	else {
 		yield [code, 0];
@@ -166,23 +168,23 @@ function* generateVar(
 		isShorthand: boolean,
 		offset: number,
 	} = curVar
-): Generator<[fragment: string, offset: number | undefined, errorMappingOnly?: boolean]> {
+): Generator<[fragment: string, offset: number | undefined, type?: 'errorMappingOnly']> {
 	// fix https://github.com/vuejs/language-tools/issues/1205
 	// fix https://github.com/vuejs/language-tools/issues/1264
-	yield ['', nextVar.offset, true];
+	yield ['', nextVar.offset, 'errorMappingOnly'];
 
 	const isDestructuredProp = destructuredPropNames?.has(curVar.text) ?? false;
 	const isTemplateRef = templateRefNames?.has(curVar.text) ?? false;
 	if (isTemplateRef) {
 		yield [`__VLS_unref(`, undefined];
-		yield [code.substring(curVar.offset, curVar.offset + curVar.text.length), curVar.offset];
+		yield [code.slice(curVar.offset, curVar.offset + curVar.text.length), curVar.offset];
 		yield [`)`, undefined];
 	}
 	else {
 		if (!isDestructuredProp) {
 			yield [`__VLS_ctx.`, undefined];
 		}
-		yield [code.substring(curVar.offset, curVar.offset + curVar.text.length), curVar.offset];
+		yield [code.slice(curVar.offset, curVar.offset + curVar.text.length), curVar.offset];
 	}
 }
 

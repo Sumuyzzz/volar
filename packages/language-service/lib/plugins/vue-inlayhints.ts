@@ -1,10 +1,9 @@
-import type { LanguageServicePluginInstance } from '@volar/language-service';
 import { tsCodegen, VueVirtualCode } from '@vue/language-core';
+import { collectIdentifiers } from '@vue/language-core/lib/codegen/utils/index';
+import type * as ts from 'typescript';
 import type * as vscode from 'vscode-languageserver-protocol';
 import { URI } from 'vscode-uri';
 import type { LanguageServicePlugin } from '../types';
-import type * as ts from 'typescript';
-import { collectIdentifiers } from '@vue/language-core/lib/codegen/common';
 
 export function create(ts: typeof import('typescript')): LanguageServicePlugin {
 	return {
@@ -12,7 +11,7 @@ export function create(ts: typeof import('typescript')): LanguageServicePlugin {
 		capabilities: {
 			inlayHintProvider: {},
 		},
-		create(context): LanguageServicePluginInstance {
+		create(context) {
 			return {
 				async provideInlayHints(document, range) {
 
@@ -24,19 +23,19 @@ export function create(ts: typeof import('typescript')): LanguageServicePlugin {
 
 					if (virtualCode instanceof VueVirtualCode) {
 
-						const codegen = tsCodegen.get(virtualCode.sfc);
+						const codegen = tsCodegen.get(virtualCode._sfc);
 						const inlayHints = [
-							...codegen?.generatedTemplate()?.inlayHints ?? [],
-							...codegen?.generatedScript()?.inlayHints ?? [],
+							...codegen?.generatedTemplate.get()?.inlayHints ?? [],
+							...codegen?.generatedScript.get()?.inlayHints ?? [],
 						];
-						const scriptSetupRanges = codegen?.scriptSetupRanges();
+						const scriptSetupRanges = codegen?.scriptSetupRanges.get();
 
-						if (scriptSetupRanges?.props.destructured && virtualCode.sfc.scriptSetup?.ast) {
+						if (scriptSetupRanges?.props.destructured && virtualCode._sfc.scriptSetup?.ast) {
 							const setting = 'vue.inlayHints.destructuredProps';
 							settings[setting] ??= await context.env.getConfiguration?.<boolean>(setting) ?? false;
 
 							if (settings[setting]) {
-								for (const [prop, isShorthand] of findDestructuredProps(ts, virtualCode.sfc.scriptSetup.ast, scriptSetupRanges.props.destructured)) {
+								for (const [prop, isShorthand] of findDestructuredProps(ts, virtualCode._sfc.scriptSetup.ast, scriptSetupRanges.props.destructured)) {
 									const name = prop.text;
 									const end = prop.getEnd();
 									const pos = isShorthand ? end : end - name.length;
@@ -52,9 +51,9 @@ export function create(ts: typeof import('typescript')): LanguageServicePlugin {
 						}
 
 						const blocks = [
-							virtualCode.sfc.template,
-							virtualCode.sfc.script,
-							virtualCode.sfc.scriptSetup,
+							virtualCode._sfc.template,
+							virtualCode._sfc.script,
+							virtualCode._sfc.scriptSetup,
 						];
 						const start = document.offsetAt(range.start);
 						const end = document.offsetAt(range.end);
@@ -107,7 +106,7 @@ export function findDestructuredProps(
 	ast: ts.SourceFile,
 	props: Set<string>
 ) {
-	const rootScope: Scope = {};
+	const rootScope: Scope = Object.create(null);
 	const scopeStack: Scope[] = [rootScope];
 	let currentScope: Scope = rootScope;
 	const excludedIds = new WeakSet<ts.Identifier>();

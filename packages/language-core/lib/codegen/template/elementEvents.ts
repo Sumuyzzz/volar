@@ -3,8 +3,8 @@ import { camelize, capitalize } from '@vue/shared';
 import type * as ts from 'typescript';
 import type { Code, VueCodeInformation } from '../../types';
 import { hyphenateAttr } from '../../utils/shared';
-import { combineLastMapping, createTsAst, endOfLine, newLine, variableNameRegex, wrapWith } from '../common';
-import { generateCamelized } from './camelized';
+import { combineLastMapping, createTsAst, endOfLine, newLine, variableNameRegex, wrapWith } from '../utils';
+import { generateCamelized } from '../utils/camelized';
 import type { TemplateCodegenContext } from './context';
 import type { TemplateCodegenOptions } from './index';
 import { generateInterpolation } from './interpolation';
@@ -17,7 +17,7 @@ export function* generateElementEvents(
 	componentInstanceVar: string,
 	emitVar: string,
 	eventsVar: string
-): Generator<Code> {
+): Generator<Code, boolean> {
 	let usedComponentEventsVar = false;
 	let propsVar: string | undefined;
 	for (const prop of node.props) {
@@ -148,9 +148,7 @@ export function* generateEventExpression(
 		yield* generateInterpolation(
 			options,
 			ctx,
-			prop.exp.content,
-			prop.exp.loc,
-			prop.exp.loc.start.offset,
+			'template',
 			offset => {
 				if (_isCompoundExpression && isFirstMapping) {
 					isFirstMapping = false;
@@ -169,6 +167,9 @@ export function* generateEventExpression(
 				}
 				return ctx.codeFeatures.all;
 			},
+			prop.exp.content,
+			prop.exp.loc.start.offset,
+			prop.exp.loc,
 			prefix,
 			suffix
 		);
@@ -210,7 +211,7 @@ export function isCompoundExpression(ts: typeof import('typescript'), ast: ts.So
 	return result;
 }
 
-function isPropertyAccessOrId(ts: typeof import('typescript'), node: ts.Node): boolean {
+function isPropertyAccessOrId(ts: typeof import('typescript'), node: ts.Node) {
 	if (ts.isIdentifier(node)) {
 		return true;
 	}

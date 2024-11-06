@@ -1,4 +1,4 @@
-import type { LanguageServicePlugin, LanguageServicePluginInstance } from '@volar/language-service';
+import type { LanguageServicePlugin } from '@volar/language-service';
 import { Sfc, VueVirtualCode, tsCodegen } from '@vue/language-core';
 import type * as vscode from 'vscode-languageserver-protocol';
 import { URI } from 'vscode-uri';
@@ -9,7 +9,7 @@ export function create(): LanguageServicePlugin {
 		capabilities: {
 			documentLinkProvider: {},
 		},
-		create(context): LanguageServicePluginInstance {
+		create(context) {
 			return {
 				provideDocumentLinks(document) {
 
@@ -20,8 +20,8 @@ export function create(): LanguageServicePlugin {
 					if (sourceScript?.generated?.root instanceof VueVirtualCode && virtualCode?.id === 'template') {
 
 						const result: vscode.DocumentLink[] = [];
-						const codegen = tsCodegen.get(sourceScript.generated.root.sfc);
-						const scopedClasses = codegen?.generatedTemplate()?.scopedClasses ?? [];
+						const codegen = tsCodegen.get(sourceScript.generated.root._sfc);
+						const scopedClasses = codegen?.generatedTemplate.get()?.scopedClasses ?? [];
 						const styleClasses = new Map<string, {
 							index: number;
 							style: Sfc['styles'][number];
@@ -29,14 +29,14 @@ export function create(): LanguageServicePlugin {
 						}[]>();
 						const option = sourceScript.generated.root.vueCompilerOptions.experimentalResolveStyleCssClasses;
 
-						for (let i = 0; i < sourceScript.generated.root.sfc.styles.length; i++) {
-							const style = sourceScript.generated.root.sfc.styles[i];
+						for (let i = 0; i < sourceScript.generated.root._sfc.styles.length; i++) {
+							const style = sourceScript.generated.root._sfc.styles[i];
 							if (option === 'always' || (option === 'scoped' && style.scoped)) {
 								for (const className of style.classNames) {
-									if (!styleClasses.has(className.text.substring(1))) {
-										styleClasses.set(className.text.substring(1), []);
+									if (!styleClasses.has(className.text.slice(1))) {
+										styleClasses.set(className.text.slice(1), []);
 									}
-									styleClasses.get(className.text.substring(1))!.push({
+									styleClasses.get(className.text.slice(1))!.push({
 										index: i,
 										style,
 										classOffset: className.offset,

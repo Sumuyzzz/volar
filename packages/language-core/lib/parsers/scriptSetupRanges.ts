@@ -1,6 +1,8 @@
 import type * as ts from 'typescript';
-import type { VueCompilerOptions, TextRange } from '../types';
-import { collectIdentifiers } from '../codegen/common';
+import { collectIdentifiers } from '../codegen/utils';
+import type { TextRange, VueCompilerOptions } from '../types';
+
+const tsCheckReg = /^\/\/\s*@ts-(?:no)?check($|\s)/;
 
 export interface ScriptSetupRanges extends ReturnType<typeof parseScriptSetupRanges> { }
 
@@ -27,11 +29,14 @@ export function parseScriptSetupRanges(
 	const slots: {
 		name?: string;
 		isObjectBindingPattern?: boolean;
-		define?: ReturnType<typeof parseDefineFunction>;
+		define?: ReturnType<typeof parseDefineFunction> & {
+			statement: TextRange;
+		};
 	} = {};
 	const emits: {
 		name?: string;
 		define?: ReturnType<typeof parseDefineFunction> & {
+			statement: TextRange;
 			hasUnionTypeArg?: boolean;
 		};
 	} = {};
@@ -44,12 +49,11 @@ export function parseScriptSetupRanges(
 		inheritAttrs?: string;
 	} = {};
 	const cssModules: {
-		exp: TextRange;
-		arg?: TextRange;
+		define: ReturnType<typeof parseDefineFunction>;
 	}[] = [];
 	const templateRefs: {
 		name?: string;
-		define?: ReturnType<typeof parseDefineFunction>;
+		define: ReturnType<typeof parseDefineFunction>;
 	}[] = [];
 	const definePropProposalA = vueCompilerOptions.experimentalDefinePropProposal === 'kevinEdition' || ast.text.trimStart().startsWith('// @experimentalDefinePropProposal=kevinEdition');
 	const definePropProposalB = vueCompilerOptions.experimentalDefinePropProposal === 'johnsonEdition' || ast.text.trimStart().startsWith('// @experimentalDefinePropProposal=johnsonEdition');
@@ -64,8 +68,12 @@ export function parseScriptSetupRanges(
 		isModel?: boolean;
 	}[] = [];
 	const text = ast.text;
-	const leadingCommentEndOffset = ts.getLeadingCommentRanges(text, 0)?.reverse()[0].end ?? 0;
 	const importComponentNames = new Set<string>();
+
+	const leadingCommentRanges = ts.getLeadingCommentRanges(text, 0)?.reverse() ?? [];
+	const leadingCommentEndOffset = leadingCommentRanges.find(
+		range => tsCheckReg.test(text.slice(range.pos, range.end))
+	)?.end ?? 0;
 
 	let bindings = parseBindingRanges(ts, ast);
 
@@ -105,7 +113,7 @@ export function parseScriptSetupRanges(
 
 	const templateRefNames = new Set(templateRefs.map(ref => ref.name));
 	bindings = bindings.filter(range => {
-		const name = text.substring(range.start, range.end);
+		const name = text.slice(range.start, range.end);
 		return !templateRefNames.has(name);
 	});
 
@@ -128,12 +136,10 @@ export function parseScriptSetupRanges(
 		return getStartEnd(ts, node, ast);
 	}
 
-	function parseDefineFunction(node: ts.CallExpression): TextRange & {
-		arg?: TextRange;
-		typeArg?: TextRange;
-	} {
+	function parseDefineFunction(node: ts.CallExpression) {
 		return {
 			..._getStartEnd(node),
+			exp: _getStartEnd(node.expression),
 			arg: node.arguments.length ? _getStartEnd(node.arguments[0]) : undefined,
 			typeArg: node.typeArguments?.length ? _getStartEnd(node.typeArguments[0]) : undefined,
 		};
@@ -279,7 +285,10 @@ export function parseScriptSetupRanges(
 				});
 			}
 			else if (vueCompilerOptions.macros.defineSlots.includes(callText)) {
-				slots.define = parseDefineFunction(node);
+				slots.define = {
+					...parseDefineFunction(node),
+					statement: getStatementRange(ts, parents, node, ast)
+				};
 				if (ts.isVariableDeclaration(parent)) {
 					if (ts.isIdentifier(parent.name)) {
 						slots.name = getNodeText(ts, parent.name, ast);
@@ -290,7 +299,10 @@ export function parseScriptSetupRanges(
 				}
 			}
 			else if (vueCompilerOptions.macros.defineEmits.includes(callText)) {
-				emits.define = parseDefineFunction(node);
+				emits.define = {
+					...parseDefineFunction(node),
+					statement: getStatementRange(ts, parents, node, ast)
+				};
 				if (ts.isVariableDeclaration(parent)) {
 					emits.name = getNodeText(ts, parent.name, ast);
 				}
@@ -326,25 +338,9 @@ export function parseScriptSetupRanges(
 					}
 				}
 
-				let statementRange: TextRange | undefined;
-				for (let i = parents.length - 1; i >= 0; i--) {
-					if (ts.isStatement(parents[i])) {
-						const statement = parents[i];
-						ts.forEachChild(statement, child => {
-							const range = _getStartEnd(child);
-							statementRange ??= range;
-							statementRange.end = range.end;
-						});
-						break;
-					}
-				}
-				if (!statementRange) {
-					statementRange = _getStartEnd(node);
-				}
-
 				props.define = {
 					...parseDefineFunction(node),
-					statement: statementRange,
+					statement: getStatementRange(ts, parents, node, ast),
 				};
 
 				if (node.arguments.length) {
@@ -376,14 +372,13 @@ export function parseScriptSetupRanges(
 						}
 					});
 					for (const prop of node.arguments[0].properties) {
-						if ((ts.isPropertyAssignment(prop)) && getNodeText(ts, prop.name, ast) === 'name' && ts.isStringLiteral(prop.initializer)) {
+						if (ts.isPropertyAssignment(prop) && getNodeText(ts, prop.name, ast) === 'name' && ts.isStringLiteral(prop.initializer)) {
 							options.name = prop.initializer.text;
 						}
 					}
 				}
 			} else if (vueCompilerOptions.composibles.useTemplateRef.includes(callText) && node.arguments.length && !node.typeArguments?.length) {
 				const define = parseDefineFunction(node);
-				define.arg = _getStartEnd(node.arguments[0]);
 				let name;
 				if (ts.isVariableDeclaration(parent)) {
 					name = getNodeText(ts, parent.name, ast);
@@ -394,13 +389,10 @@ export function parseScriptSetupRanges(
 				});
 			}
 			else if (vueCompilerOptions.composibles.useCssModule.includes(callText)) {
-				const module: (typeof cssModules)[number] = {
-					exp: _getStartEnd(node)
-				};
-				if (node.arguments.length) {
-					module.arg = _getStartEnd(node.arguments[0]);
-				}
-				cssModules.push(module);
+				const define = parseDefineFunction(node);
+				cssModules.push({
+					define
+				});
 			}
 		}
 		ts.forEachChild(node, child => {
@@ -503,7 +495,7 @@ export function getStartEnd(
 	ts: typeof import('typescript'),
 	node: ts.Node,
 	sourceFile: ts.SourceFile
-) {
+): TextRange {
 	return {
 		start: (ts as any).getTokenPosOfNode(node, sourceFile) as number,
 		end: node.end,
@@ -516,5 +508,29 @@ export function getNodeText(
 	sourceFile: ts.SourceFile
 ) {
 	const { start, end } = getStartEnd(ts, node, sourceFile);
-	return sourceFile.text.substring(start, end);
+	return sourceFile.text.slice(start, end);
+}
+
+function getStatementRange(
+	ts: typeof import('typescript'),
+	parents: ts.Node[],
+	node: ts.Node,
+	sourceFile: ts.SourceFile
+) {
+	let statementRange: TextRange | undefined;
+	for (let i = parents.length - 1; i >= 0; i--) {
+		if (ts.isStatement(parents[i])) {
+			const statement = parents[i];
+			ts.forEachChild(statement, child => {
+				const range = getStartEnd(ts, child, sourceFile);
+				statementRange ??= range;
+				statementRange.end = range.end;
+			});
+			break;
+		}
+	}
+	if (!statementRange) {
+		statementRange = getStartEnd(ts, node, sourceFile);
+	}
+	return statementRange;
 }
